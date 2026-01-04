@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TTS Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .loader {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-3xl">
+    <!-- Header -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+      <h1 class="text-2xl font-bold text-gray-800 mb-2">TTS Hub</h1>
+      <p class="text-gray-600">Multi-provider Text-to-Speech</p>
+    </div>
+
+    <!-- Main Controls -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+      <!-- Provider Selection -->
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Provider</label>
+        <select id="provider" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          <option value="">Loading...</option>
+        </select>
+      </div>
+
+      <!-- Voice Selection -->
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Voice</label>
+        <div class="flex gap-2">
+          <select id="voice" class="flex-1 p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            <option value="">Select a voice</option>
+          </select>
+          <button id="previewBtn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50" disabled>
+            Preview
+          </button>
+        </div>
+      </div>
+
+      <!-- Dynamic Parameters -->
+      <div id="parameters" class="mb-4 p-4 bg-gray-50 rounded-md">
+        <label class="block text-sm font-medium text-gray-700 mb-3">Parameters</label>
+        <div id="parameterControls" class="space-y-4">
+          <!-- Dynamic controls will be inserted here -->
+        </div>
+      </div>
+
+      <!-- Text Input -->
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Text to speak</label>
+        <textarea id="text" rows="4" class="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Enter the text you want to convert to speech..."></textarea>
+      </div>
+
+      <!-- Generate Button -->
+      <button id="generateBtn" class="w-full py-3 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+        <span>Generate Speech</span>
+        <div id="generateLoader" class="loader hidden"></div>
+      </button>
+    </div>
+
+    <!-- Audio Player -->
+    <div id="playerSection" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+      <h2 class="text-lg font-semibold text-gray-800 mb-4">Generated Audio</h2>
+      <audio id="audioPlayer" controls class="w-full mb-4"></audio>
+      <button id="downloadBtn" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
+        Download
+      </button>
+    </div>
+
+    <!-- History -->
+    <div class="bg-white rounded-lg shadow-md p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-lg font-semibold text-gray-800">History</h2>
+        <button id="clearHistoryBtn" class="text-sm text-red-600 hover:text-red-800">Clear All</button>
+      </div>
+      <div id="historyList" class="space-y-2">
+        <p class="text-gray-500 text-sm">No history yet</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview Audio (hidden) -->
+  <audio id="previewAudio" class="hidden"></audio>
+
+  <script>
+    // State
+    let providers = [];
+    let voices = [];
+    let currentParameters = [];
+    let currentAudioBlob = null;
+    let history = JSON.parse(localStorage.getItem('ttsHistory') || '[]');
+
+    // DOM Elements
+    const providerSelect = document.getElementById('provider');
+    const voiceSelect = document.getElementById('voice');
+    const previewBtn = document.getElementById('previewBtn');
+    const previewAudio = document.getElementById('previewAudio');
+    const parameterControls = document.getElementById('parameterControls');
+    const textArea = document.getElementById('text');
+    const generateBtn = document.getElementById('generateBtn');
+    const generateLoader = document.getElementById('generateLoader');
+    const playerSection = document.getElementById('playerSection');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const historyList = document.getElementById('historyList');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+
+    // Initialize
+    async function init() {
+      await loadProviders();
+      renderHistory();
+    }
+
+    // Load providers
+    async function loadProviders() {
+      try {
+        const response = await fetch('/api/providers');
+        const data = await response.json();
+        providers = data.providers;
+
+        providerSelect.innerHTML = providers.map(p =>
+          `<option value="${p.name}" ${p.isDefault ? 'selected' : ''}>${p.name}</option>`
+        ).join('');
+
+        if (providers.length > 0) {
+          await onProviderChange();
+        }
+      } catch (error) {
+        console.error('Failed to load providers:', error);
+        providerSelect.innerHTML = '<option value="">Error loading providers</option>';
+      }
+    }
+
+    // Load voices for selected provider
+    async function loadVoices(provider) {
+      try {
+        voiceSelect.innerHTML = '<option value="">Loading voices...</option>';
+        const response = await fetch(`/api/voices?provider=${provider}`);
+        const data = await response.json();
+        voices = data.voices;
+
+        voiceSelect.innerHTML = '<option value="">Select a voice</option>' +
+          voices.map(v => `<option value="${v.id}" data-preview="${v.previewUrl || ''}">${v.name}${v.gender ? ` (${v.gender})` : ''}</option>`).join('');
+
+        previewBtn.disabled = true;
+      } catch (error) {
+        console.error('Failed to load voices:', error);
+        voiceSelect.innerHTML = '<option value="">Error loading voices</option>';
+      }
+    }
+
+    // Render parameter controls
+    function renderParameters(parameters) {
+      currentParameters = parameters;
+
+      if (parameters.length === 0) {
+        parameterControls.innerHTML = '<p class="text-gray-500 text-sm">No parameters available</p>';
+        return;
+      }
+
+      parameterControls.innerHTML = parameters.map(p => `
+        <div class="flex items-center gap-4">
+          <label class="w-32 text-sm text-gray-600">${p.label}</label>
+          <input type="range" id="param_${p.name}"
+            min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}"
+            class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+          <span id="param_${p.name}_value" class="w-12 text-sm text-gray-600 text-right">${p.default}</span>
+        </div>
+      `).join('');
+
+      // Add event listeners for range inputs
+      parameters.forEach(p => {
+        const input = document.getElementById(`param_${p.name}`);
+        const valueSpan = document.getElementById(`param_${p.name}_value`);
+        input.addEventListener('input', () => {
+          valueSpan.textContent = input.value;
+        });
+      });
+    }
+
+    // Get current parameter values
+    function getParameterValues() {
+      const values = {};
+      currentParameters.forEach(p => {
+        const input = document.getElementById(`param_${p.name}`);
+        if (input) {
+          values[p.name] = parseFloat(input.value);
+        }
+      });
+      return values;
+    }
+
+    // Event: Provider changed
+    async function onProviderChange() {
+      const provider = providerSelect.value;
+      const providerData = providers.find(p => p.name === provider);
+
+      if (providerData) {
+        renderParameters(providerData.parameters);
+        await loadVoices(provider);
+      }
+    }
+
+    // Event: Voice changed
+    function onVoiceChange() {
+      const selectedOption = voiceSelect.options[voiceSelect.selectedIndex];
+      const previewUrl = selectedOption?.dataset?.preview;
+      previewBtn.disabled = !previewUrl;
+    }
+
+    // Event: Preview voice
+    function playPreview() {
+      const selectedOption = voiceSelect.options[voiceSelect.selectedIndex];
+      const previewUrl = selectedOption?.dataset?.preview;
+
+      if (previewUrl) {
+        previewAudio.src = previewUrl;
+        previewAudio.play();
+      }
+    }
+
+    // Event: Generate speech
+    async function generateSpeech() {
+      const text = textArea.value.trim();
+      const provider = providerSelect.value;
+      const voiceId = voiceSelect.value;
+
+      if (!text) {
+        alert('Please enter some text');
+        return;
+      }
+      if (!voiceId) {
+        alert('Please select a voice');
+        return;
+      }
+
+      generateBtn.disabled = true;
+      generateLoader.classList.remove('hidden');
+
+      try {
+        const params = getParameterValues();
+        const response = await fetch('/api/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            provider,
+            voiceId,
+            format: 'mp3',
+            ...params
+          })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to generate speech');
+        }
+
+        currentAudioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(currentAudioBlob);
+
+        audioPlayer.src = audioUrl;
+        playerSection.classList.remove('hidden');
+
+        // Add to history
+        addToHistory({
+          text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
+          fullText: text,
+          provider,
+          voiceId,
+          voiceName: voiceSelect.options[voiceSelect.selectedIndex].text,
+          params,
+          timestamp: Date.now(),
+          audioUrl
+        });
+
+      } catch (error) {
+        alert('Error: ' + error.message);
+      } finally {
+        generateBtn.disabled = false;
+        generateLoader.classList.add('hidden');
+      }
+    }
+
+    // Download audio
+    function downloadAudio() {
+      if (!currentAudioBlob) return;
+
+      const url = URL.createObjectURL(currentAudioBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tts_${Date.now()}.mp3`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Add to history
+    function addToHistory(item) {
+      history.unshift(item);
+      if (history.length > 20) history.pop();
+      localStorage.setItem('ttsHistory', JSON.stringify(history.map(h => ({...h, audioUrl: null}))));
+      renderHistory();
+    }
+
+    // Render history
+    function renderHistory() {
+      if (history.length === 0) {
+        historyList.innerHTML = '<p class="text-gray-500 text-sm">No history yet</p>';
+        return;
+      }
+
+      historyList.innerHTML = history.map((item, index) => `
+        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-gray-800 truncate">"${item.text}"</p>
+            <p class="text-xs text-gray-500">${item.provider} - ${item.voiceName}</p>
+          </div>
+          <div class="flex gap-2 ml-4">
+            <button onclick="replayHistory(${index})" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+              Replay
+            </button>
+            <button onclick="deleteHistory(${index})" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">
+              Delete
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Replay from history
+    async function replayHistory(index) {
+      const item = history[index];
+      if (!item) return;
+
+      // Set form values
+      providerSelect.value = item.provider;
+      await onProviderChange();
+
+      voiceSelect.value = item.voiceId;
+      onVoiceChange();
+
+      textArea.value = item.fullText;
+
+      // Set parameter values
+      if (item.params) {
+        Object.entries(item.params).forEach(([name, value]) => {
+          const input = document.getElementById(`param_${name}`);
+          const valueSpan = document.getElementById(`param_${name}_value`);
+          if (input) {
+            input.value = value;
+            if (valueSpan) valueSpan.textContent = value;
+          }
+        });
+      }
+
+      // Generate
+      await generateSpeech();
+    }
+
+    // Delete from history
+    function deleteHistory(index) {
+      history.splice(index, 1);
+      localStorage.setItem('ttsHistory', JSON.stringify(history.map(h => ({...h, audioUrl: null}))));
+      renderHistory();
+    }
+
+    // Clear all history
+    function clearHistory() {
+      if (confirm('Are you sure you want to clear all history?')) {
+        history = [];
+        localStorage.removeItem('ttsHistory');
+        renderHistory();
+      }
+    }
+
+    // Event listeners
+    providerSelect.addEventListener('change', onProviderChange);
+    voiceSelect.addEventListener('change', onVoiceChange);
+    previewBtn.addEventListener('click', playPreview);
+    generateBtn.addEventListener('click', generateSpeech);
+    downloadBtn.addEventListener('click', downloadAudio);
+    clearHistoryBtn.addEventListener('click', clearHistory);
+
+    // Initialize on load
+    init();
+  </script>
+</body>
+</html>
